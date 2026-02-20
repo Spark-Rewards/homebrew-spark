@@ -56,7 +56,12 @@ Examples:
 			return err
 		}
 
+		if err := workspace.GenerateVSCodeWorkspace(absPath); err != nil {
+			fmt.Printf("Warning: failed to create VS Code workspace: %v\n", err)
+		}
+
 		fmt.Printf("Workspace '%s' created at %s\n", ws.Name, absPath)
+		fmt.Printf("  VS Code:     %s\n", workspace.VSCodeWorkspacePath(absPath))
 		if ws.AWSProfile != "" {
 			fmt.Printf("  AWS Profile: %s\n", ws.AWSProfile)
 		}

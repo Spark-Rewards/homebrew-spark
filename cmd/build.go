@@ -12,8 +12,7 @@ import (
 )
 
 var (
-	buildAll      bool
-	buildNoLink   bool
+	buildRecursive bool
 	buildPublished bool
 )
 
@@ -40,9 +39,11 @@ var apiToModel = map[string]string{
 }
 
 var buildCmd = &cobra.Command{
-	Use:   "build [repo-name]",
-	Short: "Build a repo with automatic local dependency linking",
-	Long: `Builds a repo and automatically links locally-built dependencies.
+	Use:   "build",
+	Short: "Build current repo with automatic local dependency linking",
+	Long: `Builds the current repo and automatically links locally-built dependencies.
+
+Must be run from inside a repo directory.
 
 Like Amazon's Brazil Build, spk automatically detects when a dependency
 (like a Smithy model) is built locally and links it to consuming packages
@@ -52,16 +53,13 @@ Dependency chain:
   AppModel      -> AppAPI      (@spark-rewards/sra-sdk)
   BusinessModel -> BusinessAPI (@spark-rewards/srw-sdk)
 
-When you build an API, spk checks if its model is built locally:
-  - If YES: links the local build via npm link (live development)
-  - If NO:  uses the published package from npm registry
+With --recursive (-r), builds dependencies first, then the current repo.
 
 Examples:
-  spk build AppModel           # build model, auto-link to AppAPI if present
-  spk build AppAPI             # build API, auto-link local AppModel if built
-  spk build --all              # build all in dependency order with linking
-  spk build AppAPI --published # force use of published packages (no linking)`,
-	Args: cobra.MaximumNArgs(1),
+  cd AppAPI && spk build       # build AppAPI (links local AppModel if built)
+  cd AppAPI && spk build -r    # build AppModel first, then AppAPI
+  spk build --published        # force use of published packages`,
+	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		wsPath, err := workspace.Find()
 		if err != nil {
@@ -73,16 +71,43 @@ Examples:
 			return err
 		}
 
-		if buildAll {
-			return buildAllRepos(wsPath, ws)
+		repoName, err := detectCurrentRepo(wsPath, ws)
+		if err != nil {
+			return fmt.Errorf("must be run from inside a repo directory")
 		}
 
-		if len(args) == 0 {
-			return fmt.Errorf("specify a repo name or use --all")
+		if buildRecursive {
+			return buildRecursively(wsPath, ws, repoName)
 		}
 
-		return buildRepo(wsPath, ws, args[0])
+		return buildRepo(wsPath, ws, repoName)
 	},
+}
+
+func detectCurrentRepo(wsPath string, ws *workspace.Workspace) (string, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("could not get current directory: %w", err)
+	}
+
+	for name, repo := range ws.Repos {
+		repoDir := filepath.Join(wsPath, repo.Path)
+		absRepoDir, _ := filepath.Abs(repoDir)
+
+		if cwd == absRepoDir || isSubdir(absRepoDir, cwd) {
+			return name, nil
+		}
+	}
+
+	return "", fmt.Errorf("not inside a repo directory — specify a repo name or use --all")
+}
+
+func isSubdir(parent, child string) bool {
+	rel, err := filepath.Rel(parent, child)
+	if err != nil {
+		return false
+	}
+	return !filepath.IsAbs(rel) && len(rel) > 0 && rel[0] != '.'
 }
 
 func getBuildCommand(name string, repo workspace.RepoDef, repoDir string) string {
@@ -128,7 +153,7 @@ func buildRepo(wsPath string, ws *workspace.Workspace, name string) error {
 
 	fmt.Printf("=== Building %s ===\n", name)
 
-	if !buildNoLink && !buildPublished {
+	if !buildPublished {
 		if err := autoLinkDependencies(wsPath, ws, name); err != nil {
 			fmt.Printf("Warning: dependency linking issue: %v\n", err)
 		}
@@ -145,7 +170,7 @@ func buildRepo(wsPath string, ws *workspace.Workspace, name string) error {
 		return fmt.Errorf("build failed: %w", err)
 	}
 
-	if !buildNoLink && !buildPublished {
+	if !buildPublished {
 		if err := autoLinkToConsumers(wsPath, ws, name); err != nil {
 			fmt.Printf("Note: %v\n", err)
 		}
@@ -236,104 +261,82 @@ func autoLinkToConsumers(wsPath string, ws *workspace.Workspace, name string) er
 	return nil
 }
 
-func buildAllRepos(wsPath string, ws *workspace.Workspace) error {
-	order := getSmartBuildOrder(ws)
+func buildRecursively(wsPath string, ws *workspace.Workspace, target string) error {
+	deps := getDependencies(ws, target)
+	
+	if len(deps) > 0 {
+		fmt.Printf("Building dependencies first: %v\n\n", deps)
+		for _, dep := range deps {
+			repo, exists := ws.Repos[dep]
+			if !exists {
+				continue
+			}
 
-	fmt.Printf("Build order: %v\n", order)
-	fmt.Printf("Local linking: %v\n\n", !buildNoLink && !buildPublished)
+			repoDir := filepath.Join(wsPath, repo.Path)
+			if _, err := os.Stat(repoDir); os.IsNotExist(err) {
+				fmt.Printf("[skip] %s (not cloned)\n\n", dep)
+				continue
+			}
 
-	for _, name := range order {
-		repo, exists := ws.Repos[name]
-		if !exists {
-			continue
+			if err := buildRepo(wsPath, ws, dep); err != nil {
+				return fmt.Errorf("dependency build failed at '%s': %w", dep, err)
+			}
+			fmt.Println()
 		}
-
-		repoDir := filepath.Join(wsPath, repo.Path)
-		if _, err := os.Stat(repoDir); os.IsNotExist(err) {
-			fmt.Printf("[skip] %s (not cloned)\n\n", name)
-			continue
-		}
-
-		if err := buildRepo(wsPath, ws, name); err != nil {
-			return fmt.Errorf("build failed at '%s': %w", name, err)
-		}
-		fmt.Println()
 	}
 
-	fmt.Println("All builds completed")
-	return nil
+	return buildRepo(wsPath, ws, target)
 }
 
-func getSmartBuildOrder(ws *workspace.Workspace) []string {
-	inDegree := make(map[string]int)
-	dependents := make(map[string][]string)
+func getDependencies(ws *workspace.Workspace, name string) []string {
+	var deps []string
+	seen := make(map[string]bool)
 
-	for name := range ws.Repos {
-		inDegree[name] = 0
-	}
+	var collect func(n string)
+	collect = func(n string) {
+		if seen[n] {
+			return
+		}
+		seen[n] = true
 
-	for name := range ws.Repos {
-		if modelName, isAPI := apiToModel[name]; isAPI {
-			if _, modelExists := ws.Repos[modelName]; modelExists {
-				dependents[modelName] = append(dependents[modelName], name)
-				inDegree[name]++
+		if modelName, isAPI := apiToModel[n]; isAPI {
+			if _, exists := ws.Repos[modelName]; exists {
+				collect(modelName)
+				deps = append(deps, modelName)
 			}
 		}
-	}
 
-	for name, repo := range ws.Repos {
-		for _, dep := range repo.Dependencies {
-			if _, exists := ws.Repos[dep]; exists {
-				alreadyAdded := false
-				for _, d := range dependents[dep] {
-					if d == name {
-						alreadyAdded = true
-						break
+		if repo, exists := ws.Repos[n]; exists {
+			for _, dep := range repo.Dependencies {
+				if _, depExists := ws.Repos[dep]; depExists {
+					collect(dep)
+					if !contains(deps, dep) {
+						deps = append(deps, dep)
 					}
 				}
-				if !alreadyAdded {
-					dependents[dep] = append(dependents[dep], name)
-					inDegree[name]++
-				}
 			}
 		}
 	}
 
-	var queue []string
-	for name, deg := range inDegree {
-		if deg == 0 {
-			queue = append(queue, name)
+	collect(name)
+
+	seen[name] = false
+	var result []string
+	for _, d := range deps {
+		if d != name {
+			result = append(result, d)
 		}
 	}
+	return result
+}
 
-	var order []string
-	for len(queue) > 0 {
-		current := queue[0]
-		queue = queue[1:]
-		order = append(order, current)
-
-		for _, dep := range dependents[current] {
-			inDegree[dep]--
-			if inDegree[dep] == 0 {
-				queue = append(queue, dep)
-			}
+func contains(slice []string, item string) bool {
+	for _, s := range slice {
+		if s == item {
+			return true
 		}
 	}
-
-	for name := range ws.Repos {
-		found := false
-		for _, o := range order {
-			if o == name {
-				found = true
-				break
-			}
-		}
-		if !found {
-			order = append(order, name)
-		}
-	}
-
-	return order
+	return false
 }
 
 func runShell(dir, command string) error {
@@ -346,8 +349,7 @@ func runShell(dir, command string) error {
 }
 
 func init() {
-	buildCmd.Flags().BoolVar(&buildAll, "all", false, "Build all repos in dependency order")
-	buildCmd.Flags().BoolVar(&buildNoLink, "no-link", false, "Disable automatic local dependency linking")
+	buildCmd.Flags().BoolVarP(&buildRecursive, "recursive", "r", false, "Build dependencies first")
 	buildCmd.Flags().BoolVar(&buildPublished, "published", false, "Force use of published packages (no local linking)")
 	rootCmd.AddCommand(buildCmd)
 }

@@ -9,10 +9,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var (
-	testAll   bool
-	testWatch bool
-)
+var testWatch bool
 
 var knownTestCommands = map[string]string{
 	"AppAPI":      "npm test",
@@ -20,16 +17,16 @@ var knownTestCommands = map[string]string{
 }
 
 var testCmd = &cobra.Command{
-	Use:   "test [repo-name]",
-	Short: "Run tests for a repo",
-	Long: `Runs the test command for a repo. Auto-detects the appropriate test
-command based on repo type, or uses test_command from workspace.json.
+	Use:   "test",
+	Short: "Run tests for current repo",
+	Long: `Runs the test command for the current repo.
+
+Must be run from inside a repo directory.
 
 Examples:
-  spk test AppAPI              # run tests for AppAPI
-  spk test AppAPI --watch      # run tests in watch mode
-  spk test --all               # run tests for all repos`,
-	Args: cobra.MaximumNArgs(1),
+  cd AppAPI && spk test        # run tests
+  spk test --watch             # run tests in watch mode`,
+	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		wsPath, err := workspace.Find()
 		if err != nil {
@@ -41,16 +38,39 @@ Examples:
 			return err
 		}
 
-		if testAll {
-			return testAllRepos(wsPath, ws)
+		repoName, err := detectCurrentRepoForTest(wsPath, ws)
+		if err != nil {
+			return fmt.Errorf("must be run from inside a repo directory")
 		}
 
-		if len(args) == 0 {
-			return fmt.Errorf("specify a repo name or use --all")
-		}
-
-		return testRepo(wsPath, ws, args[0])
+		return testRepo(wsPath, ws, repoName)
 	},
+}
+
+func detectCurrentRepoForTest(wsPath string, ws *workspace.Workspace) (string, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("could not get current directory: %w", err)
+	}
+
+	for name, repo := range ws.Repos {
+		repoDir := filepath.Join(wsPath, repo.Path)
+		absRepoDir, _ := filepath.Abs(repoDir)
+
+		if cwd == absRepoDir || isSubdirTest(absRepoDir, cwd) {
+			return name, nil
+		}
+	}
+
+	return "", fmt.Errorf("not inside a repo directory — specify a repo name or use --all")
+}
+
+func isSubdirTest(parent, child string) bool {
+	rel, err := filepath.Rel(parent, child)
+	if err != nil {
+		return false
+	}
+	return !filepath.IsAbs(rel) && len(rel) > 0 && rel[0] != '.'
 }
 
 func getTestCommand(name string, repo workspace.RepoDef, repoDir string) string {
@@ -104,54 +124,7 @@ func testRepo(wsPath string, ws *workspace.Workspace, name string) error {
 	return runShell(repoDir, testCmd)
 }
 
-func testAllRepos(wsPath string, ws *workspace.Workspace) error {
-	if len(ws.Repos) == 0 {
-		fmt.Println("No repos in workspace")
-		return nil
-	}
-
-	var tested, skipped int
-	var failures []string
-
-	for name, repo := range ws.Repos {
-		repoDir := filepath.Join(wsPath, repo.Path)
-		if _, err := os.Stat(repoDir); os.IsNotExist(err) {
-			fmt.Printf("[skip] %s (not cloned)\n", name)
-			skipped++
-			continue
-		}
-
-		testCmd := getTestCommand(name, repo, repoDir)
-		if testCmd == "" {
-			fmt.Printf("[skip] %s (no test command)\n", name)
-			skipped++
-			continue
-		}
-
-		fmt.Printf("\n--- Testing %s ---\n", name)
-		if err := runShell(repoDir, testCmd); err != nil {
-			failures = append(failures, name)
-			fmt.Printf("[fail] %s\n", name)
-		} else {
-			fmt.Printf("[ok]   %s\n", name)
-			tested++
-		}
-	}
-
-	fmt.Printf("\n%d tested, %d skipped", tested, skipped)
-	if len(failures) > 0 {
-		fmt.Printf(", %d failed: %v", len(failures), failures)
-	}
-	fmt.Println()
-
-	if len(failures) > 0 {
-		return fmt.Errorf("tests failed in %d repo(s)", len(failures))
-	}
-	return nil
-}
-
 func init() {
-	testCmd.Flags().BoolVar(&testAll, "all", false, "Test all repos")
-	testCmd.Flags().BoolVar(&testWatch, "watch", false, "Run tests in watch mode")
+	testCmd.Flags().BoolVarP(&testWatch, "watch", "w", false, "Run tests in watch mode")
 	rootCmd.AddCommand(testCmd)
 }

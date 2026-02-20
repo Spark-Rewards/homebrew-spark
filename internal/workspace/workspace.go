@@ -148,6 +148,45 @@ func RemoveRepo(workspacePath, name string) error {
 	return Save(workspacePath, ws)
 }
 
+// VSCodeWorkspacePath returns the path to the .code-workspace file
+func VSCodeWorkspacePath(workspacePath string) string {
+	ws, err := Load(workspacePath)
+	if err != nil {
+		return filepath.Join(workspacePath, "workspace.code-workspace")
+	}
+	return filepath.Join(workspacePath, ws.Name+".code-workspace")
+}
+
+// GenerateVSCodeWorkspace creates/updates the .code-workspace file
+func GenerateVSCodeWorkspace(workspacePath string) error {
+	ws, err := Load(workspacePath)
+	if err != nil {
+		return err
+	}
+
+	type folder struct {
+		Path string `json:"path"`
+	}
+	type vscodeWorkspace struct {
+		Folders []folder `json:"folders"`
+	}
+
+	var folders []folder
+	for _, repo := range ws.Repos {
+		folders = append(folders, folder{Path: repo.Path})
+	}
+
+	vscWs := vscodeWorkspace{Folders: folders}
+
+	data, err := json.MarshalIndent(vscWs, "", "\t")
+	if err != nil {
+		return fmt.Errorf("failed to marshal VS Code workspace: %w", err)
+	}
+
+	wsFile := VSCodeWorkspacePath(workspacePath)
+	return os.WriteFile(wsFile, data, 0644)
+}
+
 // GlobalEnvPath returns the path to the workspace's global .env file
 func GlobalEnvPath(workspacePath string) string {
 	return filepath.Join(workspacePath, ".env")

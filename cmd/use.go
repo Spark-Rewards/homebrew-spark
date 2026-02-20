@@ -104,7 +104,14 @@ func registerRepo(wsPath, name, remote, targetDir string) error {
 		BuildCommand: useBuildCmd,
 		Dependencies: useDeps,
 	}
-	return workspace.AddRepo(wsPath, name, repo)
+	if err := workspace.AddRepo(wsPath, name, repo); err != nil {
+		return err
+	}
+
+	if err := workspace.GenerateVSCodeWorkspace(wsPath); err != nil {
+		fmt.Printf("Warning: failed to update VS Code workspace: %v\n", err)
+	}
+	return nil
 }
 
 func init() {
