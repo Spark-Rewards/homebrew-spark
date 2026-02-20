@@ -16,19 +16,20 @@ var (
 	useDeps     []string
 )
 
+const defaultGitHubOrg = "Spark-Rewards"
+
 var useCmd = &cobra.Command{
-	Use:   "use <org/repo | repo-url>",
+	Use:   "use <repo>",
 	Short: "Clone a repo into the current workspace",
 	Long: `Clones a GitHub repository into the current workspace and registers it
 in the workspace manifest.
 
-If only a repo name is provided (no org), the default_github_org from
-~/.spk/config.json is used.
+If only a repo name is provided, it defaults to the Spark-Rewards org.
 
 Examples:
-  spk use my-org/BusinessAPI
-  spk use BusinessAPI                              # uses default org
-  spk use git@github.com:my-org/BusinessAPI.git    # full URL`,
+  spk use BusinessAPI                              # clones Spark-Rewards/BusinessAPI
+  spk use other-org/SomeRepo                       # clones other-org/SomeRepo
+  spk use git@github.com:other-org/Repo.git        # full URL`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		repoArg := args[0]
@@ -76,12 +77,14 @@ func resolveRemote(arg string) string {
 		return arg
 	}
 
-	// If no slash, try to prepend default org
+	// If no slash, prepend Spark-Rewards org (or config override)
 	if !containsSlash(arg) {
+		org := defaultGitHubOrg
 		cfg, err := config.LoadGlobal()
 		if err == nil && cfg.DefaultGithubOrg != "" {
-			return git.BuildRemoteURL(cfg.DefaultGithubOrg + "/" + arg)
+			org = cfg.DefaultGithubOrg
 		}
+		return git.BuildRemoteURL(org + "/" + arg)
 	}
 
 	return git.BuildRemoteURL(arg)

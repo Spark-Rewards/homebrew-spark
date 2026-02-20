@@ -60,6 +60,13 @@ Examples:
 			}
 		}
 
+		fmt.Println("\n--- Updating Workspace Files ---")
+		if err := workspace.GenerateVSCodeWorkspace(wsPath); err != nil {
+			fmt.Printf("Warning: failed to update VS Code workspace: %v\n", err)
+		} else {
+			fmt.Printf("Updated %s\n", workspace.VSCodeWorkspacePath(wsPath))
+		}
+
 		return nil
 	},
 }
