@@ -2,6 +2,8 @@
 
 Multi-repo workspace CLI for Spark Rewards development.
 
+**New to spk?** See **[docs/GETTING_STARTED.md](docs/GETTING_STARTED.md)** for a guide (purpose, install, and how to use it).
+
 ## Install
 
 ```bash
