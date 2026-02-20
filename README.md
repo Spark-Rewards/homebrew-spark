@@ -16,7 +16,7 @@ brew install spark-rewards/spark-cli/spark-cli
 spark-cli create workspace ~/SparkRewards
 cd ~/SparkRewards
 spark-cli use https://github.com/Spark-Rewards/BusinessAPI.git
-spark-cli use [AppAPI](https://github.com/Spark-Rewards/BusinessModel.git
+spark-cli use https://github.com/Spark-Rewards/BusinessModel.git
 spark-cli sync
 cd BusinessAPI && spark-cli run build
 ```
