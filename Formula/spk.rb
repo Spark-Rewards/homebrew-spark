@@ -5,21 +5,21 @@
 class Spk < Formula
   desc "Workspace CLI for multi-repo development"
   homepage "https://github.com/Spark-Rewards/homebrew-spk"
-  version "0.2.3"
+  version "0.2.4"
   license "MIT"
 
   on_macos do
     if Hardware::CPU.intel?
-      url "https://github.com/Spark-Rewards/homebrew-spark-cli/releases/download/v0.2.3/spk_darwin_amd64.tar.gz"
-      sha256 "223b123bedbe426d4994f8e4d7f1bafc9525af07e8c8c8e24c32e4ca8665f010"
+      url "https://github.com/Spark-Rewards/homebrew-spark-cli/releases/download/v0.2.4/spk_darwin_amd64.tar.gz"
+      sha256 "a06dbb3fadca54c33ef84030cba1c466e09953e14d9785340d6fe78174a37f6e"
 
       def install
         bin.install "spk"
       end
     end
     if Hardware::CPU.arm?
-      url "https://github.com/Spark-Rewards/homebrew-spark-cli/releases/download/v0.2.3/spk_darwin_arm64.tar.gz"
-      sha256 "6022a7c6f15e4de602826b06b76915bc15e7c42d162144b91022c745a6ebf028"
+      url "https://github.com/Spark-Rewards/homebrew-spark-cli/releases/download/v0.2.4/spk_darwin_arm64.tar.gz"
+      sha256 "f842875224056fb383f53db0209a31598c03e6ac3392f5290fdd7e1ddabf0355"
 
       def install
         bin.install "spk"
@@ -29,15 +29,15 @@ class Spk < Formula
 
   on_linux do
     if Hardware::CPU.intel? && Hardware::CPU.is_64_bit?
-      url "https://github.com/Spark-Rewards/homebrew-spark-cli/releases/download/v0.2.3/spk_linux_amd64.tar.gz"
-      sha256 "35a7b31fa47216a8030a356c18a28dfff47e49c4916eb38ef39beebcf49a67c5"
+      url "https://github.com/Spark-Rewards/homebrew-spark-cli/releases/download/v0.2.4/spk_linux_amd64.tar.gz"
+      sha256 "0535dd904fe2db5d79b50feb13c006ff70a302242a7dfb53103d6b73407d13f0"
       def install
         bin.install "spk"
       end
     end
     if Hardware::CPU.arm? && Hardware::CPU.is_64_bit?
-      url "https://github.com/Spark-Rewards/homebrew-spark-cli/releases/download/v0.2.3/spk_linux_arm64.tar.gz"
-      sha256 "48aed66294ba240165ae8fdd808aa3d85035f69c91b546d68dbe46cc4619c17a"
+      url "https://github.com/Spark-Rewards/homebrew-spark-cli/releases/download/v0.2.4/spk_linux_arm64.tar.gz"
+      sha256 "5ab8f1ee6d1d582b5564f7b4a9510458beb9f363056e4d165989f43ac8bc57cf"
       def install
         bin.install "spk"
       end
