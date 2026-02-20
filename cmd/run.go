@@ -212,11 +212,22 @@ func runScript(wsPath string, ws *workspace.Workspace, repoName, script string, 
 
 	projType := detectProjectType(repoDir)
 
-	// Auto-install node_modules if missing for Node projects
+	// Auto-install node_modules if missing or broken for Node projects
 	if projType == projectTypeNode {
 		nodeModules := filepath.Join(repoDir, "node_modules")
+		needsInstall := false
+
 		if _, err := os.Stat(nodeModules); os.IsNotExist(err) {
 			fmt.Printf("node_modules missing — running npm install...\n")
+			needsInstall = true
+		} else if _, err := os.Stat(filepath.Join(nodeModules, ".package-lock.json")); os.IsNotExist(err) {
+			// .package-lock.json is written at the end of a successful install.
+			// If it's missing, the previous install was likely incomplete.
+			fmt.Printf("node_modules incomplete — running npm install...\n")
+			needsInstall = true
+		}
+
+		if needsInstall {
 			if err := runShellCmdWithEnv(repoDir, "npm install", wsEnv); err != nil {
 				return fmt.Errorf("npm install failed: %w", err)
 			}
