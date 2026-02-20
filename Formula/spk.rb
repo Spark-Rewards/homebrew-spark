@@ -5,21 +5,21 @@
 class Spk < Formula
   desc "Workspace CLI for multi-repo development"
   homepage "https://github.com/Spark-Rewards/homebrew-spk"
-  version "0.1.8"
+  version "0.1.9"
   license "MIT"
 
   on_macos do
     if Hardware::CPU.intel?
-      url "https://github.com/Spark-Rewards/homebrew-spk/releases/download/v0.1.8/spk_darwin_amd64.tar.gz"
-      sha256 "13819f5aff882b671fc83acd9bc6aae7e92aea6548c4e547c9e17d1f40c58816"
+      url "https://github.com/Spark-Rewards/homebrew-spk/releases/download/v0.1.9/spk_darwin_amd64.tar.gz"
+      sha256 "b9d74c778d1aabd513c3a3dd35f83ec94622af10f66979fd7617ba11b7a560d1"
 
       def install
         bin.install "spk"
       end
     end
     if Hardware::CPU.arm?
-      url "https://github.com/Spark-Rewards/homebrew-spk/releases/download/v0.1.8/spk_darwin_arm64.tar.gz"
-      sha256 "02a7667dd950d62b8eace1e4d2c366008dc2f3e049e183864e324a2982c475bd"
+      url "https://github.com/Spark-Rewards/homebrew-spk/releases/download/v0.1.9/spk_darwin_arm64.tar.gz"
+      sha256 "8285539e450419766d1c865ac34a640f0e591f18fa3607ed2fc5ca9d01916968"
 
       def install
         bin.install "spk"
@@ -29,15 +29,15 @@ class Spk < Formula
 
   on_linux do
     if Hardware::CPU.intel? && Hardware::CPU.is_64_bit?
-      url "https://github.com/Spark-Rewards/homebrew-spk/releases/download/v0.1.8/spk_linux_amd64.tar.gz"
-      sha256 "4eb42d3840c4188ceaf0450cada48987d87c1933c885f13038cf32258c40a322"
+      url "https://github.com/Spark-Rewards/homebrew-spk/releases/download/v0.1.9/spk_linux_amd64.tar.gz"
+      sha256 "1fc0d76322f87040ebdfb0d66889429070a443936c110604787406d7651dfa12"
       def install
         bin.install "spk"
       end
     end
     if Hardware::CPU.arm? && Hardware::CPU.is_64_bit?
-      url "https://github.com/Spark-Rewards/homebrew-spk/releases/download/v0.1.8/spk_linux_arm64.tar.gz"
-      sha256 "13dff9bc9bc392d7fadfa02597771ae7fffa6ba1ca141d500c9f4a3857e17583"
+      url "https://github.com/Spark-Rewards/homebrew-spk/releases/download/v0.1.9/spk_linux_arm64.tar.gz"
+      sha256 "c9a7616615358258cecda2bdea29a3886316470d928a2a418e84490f2a69c051"
       def install
         bin.install "spk"
       end
