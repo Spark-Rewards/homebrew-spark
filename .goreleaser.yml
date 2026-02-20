@@ -22,7 +22,8 @@ archives:
     name_template: "spk_{{ .Os }}_{{ .Arch }}"
 
 brews:
-  - repository:
+  - name: spk
+    repository:
       owner: Spark-Rewards
       name: homebrew-spk
       token: "{{ .Env.GITHUB_TOKEN }}"
