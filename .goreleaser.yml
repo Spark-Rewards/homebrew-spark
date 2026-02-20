@@ -1,0 +1,46 @@
+version: 2
+
+builds:
+  - binary: spark
+    main: ./main.go
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X github.com/BrianBFarias/homebrew-spark/cmd.Version={{.Version}}
+      - -X github.com/BrianBFarias/homebrew-spark/cmd.Commit={{.Commit}}
+      - -X github.com/BrianBFarias/homebrew-spark/cmd.Date={{.Date}}
+
+archives:
+  - formats: ['tar.gz']
+    name_template: "spark_{{ .Os }}_{{ .Arch }}"
+
+brews:
+  - repository:
+      owner: BrianBFarias
+      name: homebrew-spark
+      token: "{{ .Env.GITHUB_TOKEN }}"
+    directory: Formula
+    homepage: "https://github.com/BrianBFarias/homebrew-spark"
+    description: "Workspace CLI for multi-repo development"
+    license: "MIT"
+    install: |
+      bin.install "spark"
+    test: |
+      system "#{bin}/spark", "version"
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
