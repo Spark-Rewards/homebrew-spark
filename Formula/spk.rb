@@ -10,16 +10,16 @@ class Spk < Formula
 
   on_macos do
     if Hardware::CPU.intel?
-      url "https://github.com/Spark-Rewards/homebrew-spk/releases/download/v0.1.4/spk_darwin_amd64.tar.gz"
-      sha256 "2eb93faf2536d0d7878c6e424d4a1d295104191b5304a47bfda25f2e73163450"
+      url "https://github.com/Spark-Rewards/homebrew-spk/releases/download/v0.1.5/spk_darwin_amd64.tar.gz"
+      sha256 "2921edc3c7466a30e4502ad26b32f6f3ee5d1d503221d01b8129ee544ef09e68"
 
       def install
         bin.install "spk"
       end
     end
     if Hardware::CPU.arm?
-      url "https://github.com/Spark-Rewards/homebrew-spk/releases/download/v0.1.4/spk_darwin_arm64.tar.gz"
-      sha256 "3ff21120cf06cc447efb204f6699cb5d53ca7c61dc4f9314366716b74aa37a86"
+      url "https://github.com/Spark-Rewards/homebrew-spk/releases/download/v0.1.5/spk_darwin_arm64.tar.gz"
+      sha256 "7709a1c320e4346179a06dc2cacdbcfce1227e031e06f09a6c4458ef78f0c50d"
 
       def install
         bin.install "spk"
@@ -29,15 +29,15 @@ class Spk < Formula
 
   on_linux do
     if Hardware::CPU.intel? && Hardware::CPU.is_64_bit?
-      url "https://github.com/Spark-Rewards/homebrew-spk/releases/download/v0.1.4/spk_linux_amd64.tar.gz"
-      sha256 "2f084dc62c3b6bfd2d35bb0a374abd90f8acb8739a6ad35f5a4f87326911aa92"
+      url "https://github.com/Spark-Rewards/homebrew-spk/releases/download/v0.1.5/spk_linux_amd64.tar.gz"
+      sha256 "d6d88ccfedb1ed079101a5d891a85c237943417c1636366082792c54537abbb0"
       def install
         bin.install "spk"
       end
     end
     if Hardware::CPU.arm? && Hardware::CPU.is_64_bit?
-      url "https://github.com/Spark-Rewards/homebrew-spk/releases/download/v0.1.4/spk_linux_arm64.tar.gz"
-      sha256 "56c67547e6ea494e8edc0b2e0072c0afbd8404078bd328c40792a3a3375a979b"
+      url "https://github.com/Spark-Rewards/homebrew-spk/releases/download/v0.1.5/spk_linux_arm64.tar.gz"
+      sha256 "0dad4a72d4f02e735f587028616e111a8c36f59d088919d5118c8245825da1df"
       def install
         bin.install "spk"
       end
