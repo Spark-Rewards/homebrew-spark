@@ -559,7 +559,13 @@ func runShellCmd(dir, command string) error {
 }
 
 func runShellCmdWithEnv(dir, command string, wsEnv map[string]string) error {
-	cmd := exec.Command("sh", "-c", command)
+	// Use the user's login shell to preserve PATH (nvm, homebrew, etc.)
+	shell := os.Getenv("SHELL")
+	if shell == "" {
+		shell = "/bin/zsh"
+	}
+
+	cmd := exec.Command(shell, "-l", "-c", command)
 	cmd.Dir = dir
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -567,8 +573,18 @@ func runShellCmdWithEnv(dir, command string, wsEnv map[string]string) error {
 
 	if len(wsEnv) > 0 {
 		// Start with current environment, overlay workspace env
-		env := os.Environ()
+		envMap := make(map[string]string)
+		for _, e := range os.Environ() {
+			if idx := strings.IndexByte(e, '='); idx != -1 {
+				envMap[e[:idx]] = e[idx+1:]
+			}
+		}
+		// Workspace env overrides existing
 		for k, v := range wsEnv {
+			envMap[k] = v
+		}
+		var env []string
+		for k, v := range envMap {
 			env = append(env, fmt.Sprintf("%s=%s", k, v))
 		}
 		cmd.Env = env
