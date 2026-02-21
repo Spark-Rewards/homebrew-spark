@@ -31,4 +31,7 @@ func Execute() {
 func init() {
 	rootCmd.SetVersionTemplate(fmt.Sprintf("spark-cli %s (%s %s)\n", Version, Commit, Date))
 	rootCmd.CompletionOptions.DisableDefaultCmd = true
+
+	// No "help" subcommand — use -h/--help only
+	rootCmd.SetHelpCommand(&cobra.Command{Hidden: true})
 }
