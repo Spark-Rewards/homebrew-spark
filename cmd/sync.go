@@ -196,7 +196,11 @@ func refreshEnv(wsPath string, ws *workspace.Workspace) error {
 	if env != "" {
 		envVars["NEXT_PUBLIC_APP_ENV"] = env
 	}
-	envVars["NEXT_PUBLIC_API_DOMAIN"] = fmt.Sprintf("api-%s.sparkrewards.com", env)
+	if env == "beta" {
+		envVars["NEXT_PUBLIC_API_DOMAIN"] = "api-beta.sparkrewards.com"
+	} else {
+		envVars["NEXT_PUBLIC_API_DOMAIN"] = "api.sparkrewards.com"
+	}
 
 	// Merge workspace env vars
 	for k, v := range ws.Env {
