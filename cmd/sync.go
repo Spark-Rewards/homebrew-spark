@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/Spark-Rewards/homebrew-spark-cli/internal/aws"
 	"github.com/Spark-Rewards/homebrew-spark-cli/internal/git"
@@ -25,11 +26,12 @@ var (
 var syncCmd = &cobra.Command{
 	Use:   "sync [repo-name]",
 	Short: "Sync repos (git fetch+rebase); use --env to refresh workspace .env",
-	Long: `Syncs workspace repos. Pass --env (e.g. beta, prod) to refresh .env from SSM.
+	Long: `Syncs workspace repos with parallel fetches and rebases all local branches.
 
-  spark-cli workspace sync               # sync all repos
-  spark-cli workspace sync --env beta    # sync and refresh .env from beta
-  spark-cli workspace sync BusinessAPI   # sync one repo`,
+  spark-cli workspace sync                # sync all repos (parallel)
+  spark-cli workspace sync --install      # sync + npm install where package-lock changed
+  spark-cli workspace sync --env beta     # sync and refresh .env from beta
+  spark-cli workspace sync BusinessAPI    # sync one repo`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		wsPath, err := workspace.Find()
@@ -65,7 +67,20 @@ var syncCmd = &cobra.Command{
 	},
 }
 
-// SSM parameter suffixes to fetch — mirrors sync.sh + business website (bizz-website)
+// repoSyncResult holds the result of syncing a single repo
+type repoSyncResult struct {
+	name            string
+	branch          string
+	status          string // "synced", "skipped", "failed"
+	message         string
+	ahead           int
+	behind          int
+	dirty           bool
+	dirtyStatus     string
+	lockfileChanged bool
+}
+
+// SSM parameter suffixes to fetch
 var ssmParamSuffixes = []string{
 	"customerUserPoolId",
 	"customerWebClientId",
@@ -82,21 +97,20 @@ var ssmParamSuffixes = []string{
 	"stripePublicKey",
 }
 
-// Maps SSM param suffix → .env key name
 var ssmToEnvKey = map[string]string{
-	"customerUserPoolId":      "USERPOOL_ID",
-	"customerWebClientId":     "WEB_CLIENT_ID",
-	"identityPoolIdCustomer":  "IDENTITY_POOL_ID",
-	"businessUserPoolId":      "BUSINESS_USERPOOL_ID",
-	"businessWebClientId":     "BUSINESS_WEB_CLIENT_ID",
-	"identityPoolIdBusiness":  "BUSINESS_IDENTITY_POOL_ID",
-	"squareClientId":          "SQUARE_CLIENT_ID",
-	"cloverAppId":             "CLOVER_APP_ID",
-	"appConfig":               "APP_CONFIG_VALUES",
-	"googleApiKey_Android":    "GOOGLE_API_KEY_ANDROID",
-	"googleMapsKey":           "GOOGLE_MAPS_KEY",
-	"githubToken":             "GITHUB_TOKEN",
-	"stripePublicKey":         "STRIPE_PUBLIC_KEY",
+	"customerUserPoolId":     "USERPOOL_ID",
+	"customerWebClientId":    "WEB_CLIENT_ID",
+	"identityPoolIdCustomer": "IDENTITY_POOL_ID",
+	"businessUserPoolId":     "BUSINESS_USERPOOL_ID",
+	"businessWebClientId":    "BUSINESS_WEB_CLIENT_ID",
+	"identityPoolIdBusiness": "BUSINESS_IDENTITY_POOL_ID",
+	"squareClientId":         "SQUARE_CLIENT_ID",
+	"cloverAppId":            "CLOVER_APP_ID",
+	"appConfig":              "APP_CONFIG_VALUES",
+	"googleApiKey_Android":   "GOOGLE_API_KEY_ANDROID",
+	"googleMapsKey":          "GOOGLE_MAPS_KEY",
+	"githubToken":            "GITHUB_TOKEN",
+	"stripePublicKey":        "STRIPE_PUBLIC_KEY",
 }
 
 func refreshEnv(wsPath string, ws *workspace.Workspace) error {
@@ -132,69 +146,7 @@ func refreshEnv(wsPath string, ws *workspace.Workspace) error {
 		return fmt.Errorf("failed to fetch parameters: %w", err)
 	}
 
-	// Map SSM keys to .env keys
-	envVars := make(map[string]string)
-	for ssmKey, value := range ssmVars {
-		if envKey, ok := ssmToEnvKey[ssmKey]; ok {
-			envVars[envKey] = value
-		} else {
-			envVars[ssmKey] = value
-		}
-	}
-
-	// Business Website (Next.js) needs NEXT_PUBLIC_* from business SSM params (bizz-website)
-	if v, ok := envVars["BUSINESS_USERPOOL_ID"]; ok && v != "" {
-		envVars["NEXT_PUBLIC_USERPOOL_ID"] = v
-	}
-	if v, ok := envVars["BUSINESS_WEB_CLIENT_ID"]; ok && v != "" {
-		envVars["NEXT_PUBLIC_WEB_CLIENT_ID"] = v
-	}
-	if v, ok := envVars["BUSINESS_IDENTITY_POOL_ID"]; ok && v != "" {
-		envVars["NEXT_PUBLIC_IDENTITY_POOL_ID"] = v
-	}
-	// Fallback to customer params if business not set (e.g. older SSM)
-	if envVars["NEXT_PUBLIC_USERPOOL_ID"] == "" {
-		if v, ok := envVars["USERPOOL_ID"]; ok && v != "" {
-			envVars["NEXT_PUBLIC_USERPOOL_ID"] = v
-		}
-	}
-	if envVars["NEXT_PUBLIC_WEB_CLIENT_ID"] == "" {
-		if v, ok := envVars["WEB_CLIENT_ID"]; ok && v != "" {
-			envVars["NEXT_PUBLIC_WEB_CLIENT_ID"] = v
-		}
-	}
-	if envVars["NEXT_PUBLIC_IDENTITY_POOL_ID"] == "" {
-		if v, ok := envVars["IDENTITY_POOL_ID"]; ok && v != "" {
-			envVars["NEXT_PUBLIC_IDENTITY_POOL_ID"] = v
-		}
-	}
-
-	// Business Website: Square and Clover from SSM
-	if v, ok := envVars["SQUARE_CLIENT_ID"]; ok && v != "" {
-		envVars["NEXT_PUBLIC_SQUARE_CLIENT"] = v
-	}
-	if v, ok := envVars["CLOVER_APP_ID"]; ok && v != "" {
-		envVars["NEXT_PUBLIC_CLOVER_APP_ID"] = v
-	}
-	if v, ok := envVars["GOOGLE_MAPS_KEY"]; ok && v != "" {
-		envVars["NEXT_PUBLIC_GOOGLE_MAPS_API_KEY"] = v
-	}
-	if v, ok := envVars["STRIPE_PUBLIC_KEY"]; ok && v != "" {
-		envVars["NEXT_PUBLIC_STRIPE_KEY"] = v
-	}
-
-	// Add static env vars
-	envVars["AWS_REGION"] = region
-	envVars["NEXT_PUBLIC_AWS_REGION"] = region
-	envVars["APP_ENV"] = env
-	if env != "" {
-		envVars["NEXT_PUBLIC_APP_ENV"] = env
-	}
-
-	// Merge workspace env vars
-	for k, v := range ws.Env {
-		envVars[k] = v
-	}
+	envVars := mapSSMToEnv(ssmVars, region, env, ws)
 
 	if err := workspace.WriteGlobalEnv(wsPath, envVars); err != nil {
 		return err
@@ -204,7 +156,6 @@ func refreshEnv(wsPath string, ws *workspace.Workspace) error {
 	return nil
 }
 
-// refreshEnvQuiet does the same as refreshEnv but without verbose output
 func refreshEnvQuiet(wsPath string, ws *workspace.Workspace) error {
 	if err := aws.CheckCLI(); err != nil {
 		return err
@@ -224,7 +175,6 @@ func refreshEnvQuiet(wsPath string, ws *workspace.Workspace) error {
 		env = "beta"
 	}
 
-	// Check credentials quietly, login if needed
 	if err := aws.GetCallerIdentityQuiet(profile); err != nil {
 		if err := aws.SSOLogin(profile); err != nil {
 			return fmt.Errorf("AWS login failed: %w", err)
@@ -236,7 +186,11 @@ func refreshEnvQuiet(wsPath string, ws *workspace.Workspace) error {
 		return fmt.Errorf("failed to fetch parameters: %w", err)
 	}
 
-	// Map SSM keys to .env keys
+	envVars := mapSSMToEnv(ssmVars, region, env, ws)
+	return workspace.WriteGlobalEnv(wsPath, envVars)
+}
+
+func mapSSMToEnv(ssmVars map[string]string, region, env string, ws *workspace.Workspace) map[string]string {
 	envVars := make(map[string]string)
 	for ssmKey, value := range ssmVars {
 		if envKey, ok := ssmToEnvKey[ssmKey]; ok {
@@ -246,7 +200,7 @@ func refreshEnvQuiet(wsPath string, ws *workspace.Workspace) error {
 		}
 	}
 
-	// Business Website (Next.js) needs NEXT_PUBLIC_* from business SSM params
+	// Business Website NEXT_PUBLIC_* mappings
 	if v, ok := envVars["BUSINESS_USERPOOL_ID"]; ok && v != "" {
 		envVars["NEXT_PUBLIC_USERPOOL_ID"] = v
 	}
@@ -294,8 +248,7 @@ func refreshEnvQuiet(wsPath string, ws *workspace.Workspace) error {
 	for k, v := range ws.Env {
 		envVars[k] = v
 	}
-
-	return workspace.WriteGlobalEnv(wsPath, envVars)
+	return envVars
 }
 
 func getTargetBranch(ws *workspace.Workspace, repo *workspace.RepoDef, repoDir string) string {
@@ -322,7 +275,14 @@ func syncRepo(wsPath string, ws *workspace.Workspace, name string) error {
 		return fmt.Errorf("repo directory missing — run 'spark-cli use %s'", name)
 	}
 
-	return syncRepoInternal(wsPath, ws, name, repo, repoDir)
+	result := syncRepoFull(wsPath, ws, name, repo, repoDir)
+	printResult(result)
+
+	if syncInstall && result.lockfileChanged {
+		installRepo(wsPath, ws, name, repoDir)
+	}
+
+	return nil
 }
 
 func syncAllRepos(wsPath string, ws *workspace.Workspace) error {
@@ -331,72 +291,67 @@ func syncAllRepos(wsPath string, ws *workspace.Workspace) error {
 		return nil
 	}
 
-	// Sort repo names for consistent output
 	allNames := make([]string, 0, len(ws.Repos))
 	for name := range ws.Repos {
 		allNames = append(allNames, name)
 	}
 	sort.Strings(allNames)
 
-	var synced int
+	// Phase 1: parallel fetch all repos
+	fmt.Println("Fetching all repos...")
+	var wg sync.WaitGroup
+	for _, name := range allNames {
+		repo := ws.Repos[name]
+		repoDir := filepath.Join(wsPath, repo.Path)
+		if _, err := os.Stat(repoDir); os.IsNotExist(err) {
+			continue
+		}
+		wg.Add(1)
+		go func(dir string) {
+			defer wg.Done()
+			git.FetchQuiet(dir, "origin")
+		}(repoDir)
+	}
+	wg.Wait()
+
+	// Phase 2: rebase all branches sequentially (safe, needs working tree)
+	results := make([]repoSyncResult, 0, len(allNames))
 	for _, name := range allNames {
 		repo := ws.Repos[name]
 		repoDir := filepath.Join(wsPath, repo.Path)
 
-		// Not cloned
 		if _, err := os.Stat(repoDir); os.IsNotExist(err) {
-			fmt.Printf("[skipped-rebase] %s — not cloned\n", name)
+			results = append(results, repoSyncResult{
+				name:    name,
+				status:  "skipped",
+				message: "not cloned",
+			})
 			continue
 		}
 
-		// Has local changes — show colored status (staged/unstaged) and skip rebase
-		if git.IsDirty(repoDir) {
-			status, err := git.StatusShortColor(repoDir)
-			if err != nil || status == "" {
-				status, _ = git.Status(repoDir)
-			}
-			fmt.Printf("[skipped-rebase] %s:\n", name)
-			for _, line := range strings.Split(status, "\n") {
-				if line != "" {
-					fmt.Println("       " + line)
-				}
-			}
-			// Still fetch so refs are updated
-			git.FetchQuiet(repoDir, "origin")
-			continue
-		}
-
-		// Clean — fetch and rebase
-		if err := syncRepoInternal(wsPath, ws, name, repo, repoDir); err != nil {
-			fmt.Printf("[fail]           %s — %v\n", name, err)
-		} else {
-			fmt.Printf("[up-to-date]     %s\n", name)
-			synced++
-		}
+		result := syncRepoFull(wsPath, ws, name, repo, repoDir)
+		results = append(results, result)
 	}
 
-	fmt.Printf("\n%d repo(s) synced\n", synced)
+	// Phase 3: print status table
+	fmt.Println()
+	printStatusTable(results)
 
+	// Phase 4: npm install where package-lock changed
 	if syncInstall {
-		fmt.Println("\nRunning npm install on all repos...")
-		wsEnv := make(map[string]string)
-		dotEnv, _ := workspace.ReadGlobalEnv(wsPath)
-		for k, v := range dotEnv {
-			wsEnv[k] = v
-		}
-		for k, v := range ws.Env {
-			wsEnv[k] = v
-		}
-		wsEnv = ensureGitHubTokenSync(wsEnv)
-
+		fmt.Println("\nInstalling dependencies where package-lock.json changed...")
+		wsEnv := buildSyncEnv(wsPath, ws)
 		var installed int
-		for _, name := range allNames {
-			repo := ws.Repos[name]
+		for _, r := range results {
+			if !r.lockfileChanged {
+				continue
+			}
+			repo := ws.Repos[r.name]
 			repoDir := filepath.Join(wsPath, repo.Path)
 			if _, err := os.Stat(filepath.Join(repoDir, "package.json")); os.IsNotExist(err) {
 				continue
 			}
-			fmt.Printf("  npm install %s...", name)
+			fmt.Printf("  npm install %s...", r.name)
 			if err := runSyncCmd(repoDir, "npm install", wsEnv); err != nil {
 				fmt.Printf(" ✗ %v\n", err)
 			} else {
@@ -404,35 +359,181 @@ func syncAllRepos(wsPath string, ws *workspace.Workspace) error {
 				installed++
 			}
 		}
-		fmt.Printf("%d repo(s) installed\n", installed)
+		if installed > 0 {
+			fmt.Printf("%d repo(s) installed\n", installed)
+		} else {
+			fmt.Println("No repos needed npm install")
+		}
 	}
 
 	return nil
 }
 
-func syncRepoInternal(wsPath string, ws *workspace.Workspace, name string, repo workspace.RepoDef, repoDir string) error {
+// syncRepoFull fetches, rebases all local branches onto main, and returns status
+func syncRepoFull(wsPath string, ws *workspace.Workspace, name string, repo workspace.RepoDef, repoDir string) repoSyncResult {
+	currentBranch := git.GetCurrentBranch(repoDir)
 	targetBranch := getTargetBranch(ws, &repo, repoDir)
+	upstream := fmt.Sprintf("origin/%s", targetBranch)
+
+	result := repoSyncResult{
+		name:   name,
+		branch: currentBranch,
+	}
+
+	// Get ahead/behind for current branch vs origin/main
+	result.ahead, result.behind = git.AheadBehind(repoDir, currentBranch, upstream)
+
+	// Check dirty
+	if git.IsDirty(repoDir) {
+		result.dirty = true
+		status, err := git.StatusShortColor(repoDir)
+		if err != nil || status == "" {
+			status, _ = git.Status(repoDir)
+		}
+		result.dirtyStatus = status
+		result.status = "skipped"
+		result.message = "dirty working tree"
+		return result
+	}
 
 	if syncNoRebase {
-		return git.Pull(repoDir)
+		if err := git.Pull(repoDir); err != nil {
+			result.status = "failed"
+			result.message = err.Error()
+			return result
+		}
+		result.status = "synced"
+		return result
 	}
 
-	// Never stash: refuse to rebase when dirty so we never touch the user's working tree on failure
-	if git.IsDirty(repoDir) {
-		return fmt.Errorf("repo has local changes — commit or stash manually before syncing")
-	}
+	// Record package-lock hash before rebase
+	lockBefore := fileHash(filepath.Join(repoDir, "package-lock.json"))
 
-	if err := git.FetchQuiet(repoDir, "origin"); err != nil {
-		return fmt.Errorf("fetch failed: %w", err)
-	}
+	// Get all local branches
+	branches := git.ListLocalBranches(repoDir)
 
-	upstream := fmt.Sprintf("origin/%s", targetBranch)
+	// Rebase current branch first
 	if err := git.RebaseQuiet(repoDir, upstream); err != nil {
 		git.RebaseAbortQuiet(repoDir)
-		return fmt.Errorf("rebase onto %s failed", upstream)
+		result.status = "failed"
+		result.message = fmt.Sprintf("rebase %s onto %s failed", currentBranch, upstream)
+		return result
 	}
 
-	return nil
+	// Rebase other local branches onto main
+	var rebasedOthers []string
+	var failedOthers []string
+	for _, branch := range branches {
+		if branch == currentBranch || branch == targetBranch {
+			continue
+		}
+		// Checkout, rebase, come back
+		if err := git.CheckoutQuiet(repoDir, branch); err != nil {
+			continue
+		}
+		if err := git.RebaseQuiet(repoDir, upstream); err != nil {
+			git.RebaseAbortQuiet(repoDir)
+			failedOthers = append(failedOthers, branch)
+		} else {
+			rebasedOthers = append(rebasedOthers, branch)
+		}
+	}
+
+	// Return to original branch
+	git.CheckoutQuiet(repoDir, currentBranch)
+
+	// Check if package-lock changed
+	lockAfter := fileHash(filepath.Join(repoDir, "package-lock.json"))
+	result.lockfileChanged = lockBefore != lockAfter
+
+	// Recompute ahead/behind after rebase
+	result.ahead, result.behind = git.AheadBehind(repoDir, currentBranch, upstream)
+
+	result.status = "synced"
+	if len(rebasedOthers) > 0 {
+		result.message = fmt.Sprintf("+%d branches rebased", len(rebasedOthers))
+	}
+	if len(failedOthers) > 0 {
+		if result.message != "" {
+			result.message += ", "
+		}
+		result.message += fmt.Sprintf("%d branch rebase(s) failed: %s", len(failedOthers), strings.Join(failedOthers, ", "))
+	}
+
+	return result
+}
+
+func printResult(r repoSyncResult) {
+	icon := "✓"
+	if r.status == "skipped" {
+		icon = "⏭"
+	} else if r.status == "failed" {
+		icon = "✗"
+	}
+	line := fmt.Sprintf("%s %-25s %-20s", icon, r.name, r.branch)
+	if r.ahead > 0 || r.behind > 0 {
+		line += fmt.Sprintf(" ↑%d ↓%d", r.ahead, r.behind)
+	}
+	if r.dirty {
+		line += " [dirty]"
+	}
+	if r.lockfileChanged {
+		line += " [lock changed]"
+	}
+	if r.message != "" {
+		line += " — " + r.message
+	}
+	fmt.Println(line)
+}
+
+func printStatusTable(results []repoSyncResult) {
+	var synced, skipped, failed int
+	for _, r := range results {
+		printResult(r)
+		switch r.status {
+		case "synced":
+			synced++
+		case "skipped":
+			skipped++
+		case "failed":
+			failed++
+		}
+	}
+	fmt.Printf("\n%d synced, %d skipped, %d failed\n", synced, skipped, failed)
+}
+
+func fileHash(path string) string {
+	info, err := os.Stat(path)
+	if err != nil {
+		return ""
+	}
+	// Use size+modtime as a cheap hash
+	return fmt.Sprintf("%d-%d", info.Size(), info.ModTime().UnixNano())
+}
+
+func installRepo(wsPath string, ws *workspace.Workspace, name, repoDir string) {
+	if _, err := os.Stat(filepath.Join(repoDir, "package.json")); os.IsNotExist(err) {
+		return
+	}
+	wsEnv := buildSyncEnv(wsPath, ws)
+	fmt.Printf("  npm install %s...", name)
+	if err := runSyncCmd(repoDir, "npm install", wsEnv); err != nil {
+		fmt.Printf(" ✗ %v\n", err)
+	} else {
+		fmt.Printf(" ✓\n")
+	}
+}
+
+func buildSyncEnv(wsPath string, ws *workspace.Workspace) map[string]string {
+	wsEnv := make(map[string]string)
+	dotEnv, _ := workspace.ReadGlobalEnv(wsPath)
+	for k, v := range dotEnv {
+		wsEnv[k] = v
+	}
+	for k, v := range ws.Env {
+		wsEnv[k] = v
+	}
+	return ensureGitHubTokenSync(wsEnv)
 }
 
 func runSyncCmd(dir, command string, wsEnv map[string]string) error {
@@ -442,7 +543,6 @@ func runSyncCmd(dir, command string, wsEnv map[string]string) error {
 	}
 	cmd := exec.Command(shell, "-l", "-c", command)
 	cmd.Dir = dir
-	// Suppress output for cleaner sync
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 
@@ -492,6 +592,6 @@ func init() {
 	syncCmd.Flags().StringVar(&syncBranch, "branch", "", "Target branch (default: main)")
 	syncCmd.Flags().BoolVar(&syncNoRebase, "no-rebase", false, "Use git pull instead of rebase")
 	syncCmd.Flags().StringVar(&syncEnv, "env", "", "Refresh .env from this SSM environment (e.g. beta, prod)")
-	syncCmd.Flags().BoolVarP(&syncInstall, "install", "i", false, "Run npm install on all repos after sync")
+	syncCmd.Flags().BoolVarP(&syncInstall, "install", "i", false, "Run npm install on repos where package-lock.json changed")
 	workspaceCmd.AddCommand(syncCmd)
 }

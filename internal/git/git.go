@@ -213,6 +213,51 @@ func IsUpToDate(repoDir, targetBranch string) bool {
 	return strings.TrimSpace(string(head)) == strings.TrimSpace(string(upstream))
 }
 
+// GetCurrentBranch returns the current branch name (convenience wrapper)
+func GetCurrentBranch(repoDir string) string {
+	b, err := CurrentBranch(repoDir)
+	if err != nil {
+		return "unknown"
+	}
+	return b
+}
+
+// ListLocalBranches returns all local branch names
+func ListLocalBranches(repoDir string) []string {
+	cmd := exec.Command("git", "for-each-ref", "--format=%(refname:short)", "refs/heads/")
+	cmd.Dir = repoDir
+	out, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+	raw := strings.TrimSpace(string(out))
+	if raw == "" {
+		return nil
+	}
+	return strings.Split(raw, "\n")
+}
+
+// AheadBehind returns how many commits local is ahead/behind upstream
+func AheadBehind(repoDir, local, upstream string) (ahead, behind int) {
+	cmd := exec.Command("git", "rev-list", "--left-right", "--count", fmt.Sprintf("%s...%s", local, upstream))
+	cmd.Dir = repoDir
+	out, err := cmd.Output()
+	if err != nil {
+		return 0, 0
+	}
+	parts := strings.Fields(strings.TrimSpace(string(out)))
+	if len(parts) == 2 {
+		fmt.Sscanf(parts[0], "%d", &ahead)
+		fmt.Sscanf(parts[1], "%d", &behind)
+	}
+	return
+}
+
+// CheckoutQuiet switches to a branch with output suppressed
+func CheckoutQuiet(repoDir, branch string) error {
+	return runQuiet(repoDir, "git", "checkout", branch)
+}
+
 // GetDefaultBranch attempts to determine the default branch (main or prod)
 func GetDefaultBranch(repoDir string) string {
 	cmd := exec.Command("git", "symbolic-ref", "refs/remotes/origin/HEAD")
